@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gofrs/uuid"
+	"github.com/siyul-park/uniflow/pkg/resource"
 	"github.com/siyul-park/uniflow/pkg/scheme"
 	"github.com/siyul-park/uniflow/pkg/secret"
 	"github.com/siyul-park/uniflow/pkg/spec"
@@ -26,8 +27,8 @@ type Loader struct {
 	scheme       *scheme.Scheme
 	specStore    spec.Store
 	secretStore  secret.Store
-	specStream   spec.Stream
-	secretStream secret.Stream
+	specStream   resource.Stream
+	secretStream resource.Stream
 	mu           sync.RWMutex
 }
 
@@ -65,9 +66,11 @@ func (l *Loader) Load(ctx context.Context, specs ...spec.Spec) ([]*Symbol, error
 		}
 	}
 
-	secrets, err = l.secretStore.Load(ctx, secrets...)
-	if err != nil {
-		return nil, err
+	if len(secrets) > 0 {
+		secrets, err = l.secretStore.Load(ctx, secrets...)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var symbols []*Symbol
@@ -109,7 +112,7 @@ func (l *Loader) Load(ctx context.Context, specs ...spec.Spec) ([]*Symbol, error
 
 	for _, id := range l.table.Keys() {
 		sym, ok := l.table.Lookup(id)
-		if ok && len(spec.Match(sym.Spec, examples...)) > 0 {
+		if ok && len(resource.Match(sym.Spec, examples...)) > 0 {
 			var sym *Symbol
 			for _, s := range symbols {
 				if s.ID() == id {
@@ -132,11 +135,18 @@ func (l *Loader) Load(ctx context.Context, specs ...spec.Spec) ([]*Symbol, error
 }
 
 // Watch starts watching for changes to spec.Spec.
-func (l *Loader) Watch(ctx context.Context, specs ...spec.Spec) error {
+func (l *Loader) Watch(ctx context.Context, resources ...resource.Resource) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	if l.specStream == nil {
+		specs := make([]spec.Spec, 0, len(resources))
+		for _, res := range resources {
+			specs = append(specs, &spec.Meta{
+				Namespace: res.GetNamespace(),
+			})
+		}
+
 		specStream, err := l.specStore.Watch(ctx, specs...)
 		if err != nil {
 			return err
@@ -157,10 +167,10 @@ func (l *Loader) Watch(ctx context.Context, specs ...spec.Spec) error {
 	}
 
 	if l.secretStream == nil {
-		secrets := make([]*secret.Secret, 0, len(specs))
-		for _, spec := range specs {
+		secrets := make([]*secret.Secret, 0, len(resources))
+		for _, res := range resources {
 			secrets = append(secrets, &secret.Secret{
-				Namespace: spec.GetNamespace(),
+				Namespace: res.GetNamespace(),
 			})
 		}
 
@@ -199,7 +209,7 @@ func (l *Loader) Reconcile(ctx context.Context) error {
 		return nil
 	}
 
-	unloaded := map[uuid.UUID]spec.Spec{}
+	buffer := map[uuid.UUID]spec.Spec{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -225,15 +235,17 @@ func (l *Loader) Reconcile(ctx context.Context) error {
 					examples = append(examples, sym.Spec)
 				}
 			}
-			for _, example := range unloaded {
-				if l.scheme.IsBound(example, secrets...) {
-					examples = append(examples, example)
+			for _, spc := range buffer {
+				if l.scheme.IsBound(spc, secrets...) {
+					examples = append(examples, spc)
 				}
 			}
 
 			for _, example := range examples {
-				if _, err := l.Load(ctx, example); err == nil {
-					delete(unloaded, example.GetID())
+				if _, err := l.Load(ctx, &spec.Meta{ID: example.GetID()}); err == nil {
+					delete(buffer, example.GetID())
+				} else {
+					buffer[example.GetID()] = example
 				}
 			}
 		case event, ok := <-specStream.Next():
@@ -251,17 +263,17 @@ func (l *Loader) Reconcile(ctx context.Context) error {
 			}
 
 			for _, spec := range specs {
-				unloaded[spec.GetID()] = spec
+				buffer[spec.GetID()] = spec
 			}
 
 			var examples []spec.Spec
-			for _, example := range unloaded {
-				examples = append(examples, &spec.Meta{ID: example.GetID()})
+			for _, example := range buffer {
+				examples = append(examples, example)
 			}
 
 			for _, example := range examples {
-				if _, err := l.Load(ctx, example); err == nil {
-					delete(unloaded, example.GetID())
+				if _, err := l.Load(ctx, &spec.Meta{ID: example.GetID()}); err == nil {
+					delete(buffer, example.GetID())
 				}
 			}
 		}
