@@ -1,4 +1,4 @@
-# 🔧 Extending User Functionality
+# 🔧 User Extentsion
 
 This guide explains how users can extend their services and integrate them into the runtime environment.
 
@@ -151,36 +151,14 @@ func main() {
 	specStore := spec.NewStore()
 	secretStore := secret.NewStore()
 
-	sbuilder := scheme.NewBuilder()
-	hbuilder := hook.NewBuilder()
+	schemeBuilder := scheme.NewBuilder()
+	hookBuilder := hook.NewBuilder()
 
-	langs := language.NewModule()
-	langs.Store(text.Language, text.NewCompiler())
-	langs.Store(json.Language, json.NewCompiler())
-	langs.Store(yaml.Language, yaml.NewCompiler())
-	langs.Store(cel.Language, cel.NewCompiler())
-	langs.Store(javascript.Language, javascript.NewCompiler())
-	langs.Store(typescript.Language, typescript.NewCompiler())
-
-	stable := system.NewTable()
-	stable.Store(system.CodeCreateNodes, system.CreateNodes(specStore))
-	stable.Store(system.CodeReadNodes, system.ReadNodes(specStore))
-	stable.Store(system.CodeUpdateNodes, system.UpdateNodes(specStore))
-	stable.Store(system.CodeDeleteNodes, system.DeleteNodes(specStore))
-
-	sbuilder.Register(control.AddToScheme(langs, cel.Language))
-	sbuilder.Register(io.AddToScheme())
-	sbuilder.Register(network.AddToScheme())
-	sbuilder.Register(system.AddToScheme(stable))
-
-	hbuilder.Register(control.AddToHook())
-	hbuilder.Register(network.AddToHook())
-
-	scheme, err := sbuilder.Build()
+	scheme, err := schemeBuilder.Build()
 	if err != nil {
 		log.Fatal(err)
 	}
-	hook, err := hbuilder.Build()
+	hook, err := hookBuilder.Build()
 	if err != nil {
 		log.Fatal(err)
 	}
